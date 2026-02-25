@@ -135,6 +135,19 @@ class StatsWidget(QWidget):
         header.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.layout.addWidget(header)
         
+        # Model Info Row
+        model_frame = QFrame()
+        model_layout = QHBoxLayout(model_frame)
+        model_layout.setContentsMargins(0,0,0,0)
+        
+        self.stat_model = StatCard("Model", "Loading...")
+        self.stat_device = StatCard("Device", "—")
+        
+        model_layout.addWidget(self.stat_model)
+        model_layout.addWidget(self.stat_device)
+        
+        self.layout.addWidget(model_frame)
+        
         # System Stats Grid
         grid_frame = QFrame()
         grid_layout = QHBoxLayout(grid_frame)
@@ -177,3 +190,14 @@ class StatsWidget(QWidget):
                 row.update_stat(densities[i], light_states[i])
                 
         self.graph.update_graph(total)
+
+    def update_model_info(self, info: dict):
+        """Update model status display."""
+        self.stat_model.set_value(info.get("model_type", "Unknown"))
+        device = info.get("device", "CPU")
+        self.stat_device.set_value(device)
+        # Color the device card based on GPU/CPU
+        if device == "CUDA":
+            self.stat_device.lbl_value.setStyleSheet("color: #03DAC6; font-size: 18px; font-weight: bold;")
+        else:
+            self.stat_device.lbl_value.setStyleSheet("color: #FBC02D; font-size: 18px; font-weight: bold;")

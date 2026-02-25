@@ -9,6 +9,7 @@ from src.core.detector import VehicleDetector
 from src.core.aruco_manager import ArucoManager
 from src.core.traffic_logic import TrafficController
 from src.core.logger import DataLogger
+from src.core.esp32_bridge import ESP32Bridge
 
 CONFIG_FILE = "config.json"
 
@@ -19,6 +20,8 @@ class VideoProcessor(QObject):
     Uses the custom-trained YOLO model and ArUco lane mapping.
     """
     processed_signal = pyqtSignal(np.ndarray, list, list)  # frame, densities, light_states
+    model_info_signal = pyqtSignal(dict)  # model status info for GUI
+    esp32_status_signal = pyqtSignal(dict)  # ESP32 bridge status
     finished = pyqtSignal()
 
     def __init__(self, camera_source=0, conf_threshold=0.3):
@@ -30,6 +33,7 @@ class VideoProcessor(QObject):
         self.aruco_manager = None
         self.traffic_controller = None
         self.logger = None
+        self.esp32_bridge = None
         self.aruco_lane_map = {}  # marker_id -> lane_number
         
         # Load config
@@ -44,7 +48,12 @@ class VideoProcessor(QObject):
                     self.model_path = cfg.get("model_path", "yolov8n.pt")
                     aruco_map = cfg.get("aruco_lane_map", {})
                     self.aruco_lane_map = {int(k): int(v) for k, v in aruco_map.items()}
+                    # ESP32 serial config
+                    self.esp32_port = cfg.get("esp32_port", "COM3")
+                    self.esp32_baud = cfg.get("esp32_baud", 115200)
+                    self.esp32_enabled = cfg.get("esp32_enabled", False)
                     print(f"Config loaded: model={self.model_path}, aruco_map={self.aruco_lane_map}")
+                    print(f"ESP32: enabled={self.esp32_enabled}, port={self.esp32_port}")
             except Exception as e:
                 print(f"Config load error: {e}")
                 self.model_path = "yolov8n.pt"
@@ -61,6 +70,19 @@ class VideoProcessor(QObject):
             self.aruco_manager = ArucoManager()
             self.traffic_controller = TrafficController()
             self.logger = DataLogger()
+            
+            # Initialize ESP32 bridge
+            self.esp32_bridge = ESP32Bridge(
+                port=getattr(self, 'esp32_port', 'COM3'),
+                baud=getattr(self, 'esp32_baud', 115200),
+                enabled=getattr(self, 'esp32_enabled', False)
+            )
+            if self.esp32_bridge.enabled:
+                self.esp32_bridge.connect()
+                self.esp32_status_signal.emit(self.esp32_bridge.status)
+            
+            # Emit model info to GUI
+            self.model_info_signal.emit(self.detector.model_info)
             
             self.camera = CameraThread(self.camera_source)
             self.camera.frame_received.connect(self.process_frame)
@@ -121,6 +143,12 @@ class VideoProcessor(QObject):
             # 8. Log
             if self.logger:
                 self.logger.log(lane_counts, states)
+            
+            # 9. Send data to ESP32 → Arduino Mega
+            if self.esp32_bridge and self.esp32_bridge.enabled:
+                self.esp32_bridge.send_density(lane_counts)
+                if emergency_lane is not None:
+                    self.esp32_bridge.send_emergency(emergency_lane)
             
             self.processed_signal.emit(annotated, lane_counts, states)
             
@@ -183,4 +211,6 @@ class VideoProcessor(QObject):
     def stop(self):
         if self.camera:
             self.camera.stop()
+        if self.esp32_bridge:
+            self.esp32_bridge.disconnect()
         self.finished.emit()

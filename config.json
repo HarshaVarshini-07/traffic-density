@@ -14,5 +14,8 @@
         "1": 4,
         "2": 1,
         "3": 2
-    }
+    },
+    "esp32_port": "COM3",
+    "esp32_baud": 115200,
+    "esp32_enabled": false
 }

@@ -2,10 +2,13 @@ try:
     from ultralytics import YOLO
     import supervision as sv
     import numpy as np
+    import torch
     AI_AVAILABLE = True
+    CUDA_AVAILABLE = torch.cuda.is_available()
 except ImportError as e:
     print(f"AI/Torch Import Error: {e}")
     AI_AVAILABLE = False
+    CUDA_AVAILABLE = False
     # Mock classes for Safe Mode
     class YOLO: pass
     class sv: 
@@ -18,7 +21,7 @@ except ImportError as e:
 import json
 import os
 
-# Custom model classes
+# Custom model classes (must match data.yaml)
 CUSTOM_CLASSES = ['car', 'yellow_strip', 'black_strip', 'traffic_light', 'aruco_marker', 'boundary', 'mixed_lane', 'uno_breadboard', 'emergency_vehicle']
 
 
@@ -27,30 +30,63 @@ class VehicleDetector:
         self.ai_available = AI_AVAILABLE
         self.conf_threshold = conf_threshold
         self.is_custom_model = False
-        
-        # Determine if using custom model or COCO model
-        if os.path.exists(model_path) and 'smart_traffic' in model_path:
-            self.is_custom_model = True
-            # Custom model: detect all 8 classes
-            self.classes_to_detect = list(range(len(CUSTOM_CLASSES)))
-            self.classes_to_show = list(range(len(CUSTOM_CLASSES)))
-            self.class_names = CUSTOM_CLASSES
-        else:
-            # COCO model: 2=car, 3=motorcycle, 5=bus, 7=truck
-            self.classes_to_detect = [2, 3, 5, 7]
-            self.classes_to_show = [2]
-            self.class_names = None  # Use model's built-in names
+        self.device = "cpu"
+        self._model_name = os.path.basename(model_path)
+        self._num_classes = 0
         
         if self.ai_available:
             try:
+                # Select best available device
+                if CUDA_AVAILABLE:
+                    self.device = "cuda"
+                    print(f"CUDA GPU detected: {torch.cuda.get_device_name(0)}")
+                else:
+                    self.device = "cpu"
+                    print("No CUDA GPU found, using CPU")
+                
                 self.model = YOLO(model_path)
+                
+                # Auto-detect custom model by checking class names
+                model_names = self.model.names  # dict {0: 'car', 1: 'yellow_strip', ...}
+                self._num_classes = len(model_names)
+                
+                if self._num_classes == len(CUSTOM_CLASSES) and model_names.get(0) == 'car':
+                    self.is_custom_model = True
+                    self.classes_to_detect = list(range(len(CUSTOM_CLASSES)))
+                    self.classes_to_show = list(range(len(CUSTOM_CLASSES)))
+                    self.class_names = CUSTOM_CLASSES
+                    print(f"Custom {self._num_classes}-class model detected")
+                else:
+                    # COCO model: 2=car, 3=motorcycle, 5=bus, 7=truck
+                    self.classes_to_detect = [2, 3, 5, 7]
+                    self.classes_to_show = [2]
+                    self.class_names = None  # Use model's built-in names
+                    print(f"COCO model detected ({self._num_classes} classes)")
+                
                 self.tracker = sv.ByteTrack()
                 self.box_annotator = sv.BoxAnnotator(thickness=2)
                 self.label_annotator = sv.LabelAnnotator(text_scale=0.5, text_padding=5)
-                print(f"Model loaded: {model_path} ({'Custom 9-class' if self.is_custom_model else 'COCO'})")
+                print(f"Model loaded: {model_path} on {self.device.upper()}")
             except Exception as e:
                 print(f"Model Load Error: {e}")
                 self.ai_available = False
+        
+    @property
+    def model_info(self):
+        """Return model status info for GUI display."""
+        if not self.ai_available:
+            return {
+                "model_type": "Not Loaded",
+                "device": "N/A",
+                "num_classes": 0,
+                "model_name": "None"
+            }
+        return {
+            "model_type": f"Custom {self._num_classes}-class" if self.is_custom_model else "COCO",
+            "device": self.device.upper(),
+            "num_classes": self._num_classes,
+            "model_name": self._model_name
+        }
 
     def detect(self, frame):
         """
@@ -60,7 +96,7 @@ class VehicleDetector:
             return sv.Detections.from_ultralytics(None)
             
         try:
-            results = self.model(frame, verbose=False, conf=self.conf_threshold)[0]
+            results = self.model(frame, verbose=False, conf=self.conf_threshold, device=self.device)[0]
             detections = sv.Detections.from_ultralytics(results)
             
             if not self.is_custom_model:
@@ -87,6 +123,14 @@ class VehicleDetector:
             mask = np.isin(detections.class_id, self.classes_to_detect)
         
         return detections[mask]
+
+    def get_emergency_detections(self, detections):
+        """Extract emergency vehicle detections (custom model only, class 8)."""
+        if not self.is_custom_model or detections.class_id is None:
+            return None
+        mask = detections.class_id == 8  # emergency_vehicle
+        filtered = detections[mask]
+        return filtered if len(filtered) > 0 else None
 
     def get_aruco_detections(self, detections):
         """Extract ArUco marker detections (custom model only, class 4)."""

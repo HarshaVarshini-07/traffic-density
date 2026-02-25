@@ -17,10 +17,10 @@ import json
 import numpy as np
 
 MODEL_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 
-                          'runs', 'detect', 'runs', 'detect', 'smart_traffic', 'weights', 'best.pt')
+                          'runs', 'detect', 'runs', 'detect', 'smart_traffic_gpu', 'weights', 'best.pt')
 CONFIG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'config.json')
 
-CLASSES = ['car', 'yellow_strip', 'black_strip', 'traffic_light', 'aruco_marker', 'boundary', 'mixed_lane', 'uno_breadboard']
+CLASSES = ['car', 'yellow_strip', 'black_strip', 'traffic_light', 'aruco_marker', 'boundary', 'mixed_lane', 'uno_breadboard', 'emergency_vehicle']
 COLORS = [
     (100, 255, 0),     # car - green
     (0, 255, 255),     # yellow_strip - yellow
@@ -30,6 +30,7 @@ COLORS = [
     (255, 100, 200),   # boundary - purple
     (0, 165, 255),     # mixed_lane - orange
     (200, 200, 0),     # uno_breadboard - cyan
+    (0, 0, 255),       # emergency_vehicle - bright red
 ]
 
 
