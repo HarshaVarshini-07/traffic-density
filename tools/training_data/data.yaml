@@ -1,0 +1,5 @@
+path: D:\smarttraffic\tools\training_data
+train: images
+val: images
+nc: 9
+names: ['car', 'yellow_strip', 'black_strip', 'traffic_light', 'aruco_marker', 'boundary', 'mixed_lane', 'uno_breadboard', 'emergency_vehicle']

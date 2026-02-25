@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual environment / libs
+libs/
+venv/
+env/
+
+# YOLO model weights (large files)
+*.pt
+*.onnx
+
+# Training runs output
+runs/
+
+# Logs
+logs/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+Thumbs.db
+.DS_Store
+
+# Large binaries
+*.exe
+*.mp4
+*.avi
+
+# Gemini
+.gemini/
