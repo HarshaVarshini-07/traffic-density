@@ -1,216 +1,128 @@
 /*
- * ============================================================
- *  ESP32 SENDER — Smart Traffic Management System
- * ============================================================
- *  Role: Connects to PC via USB Serial.
- *        Receives density & emergency commands from Python.
- *        Broadcasts data to the Receiver ESP32 via ESP-NOW.
- * 
- *  Serial Protocol (from Python):
- *    DEN:c1,c2,c3,c4\n   — lane densities
- *    EMG:lane\n            — emergency on lane (1-4)
- *    EMG:0\n               — cancel emergency
- *    SIG:s1,s2,s3,s4\n    — signal states (R/Y/G per lane)
- * 
- *  Wiring:
- *    USB cable to PC — that's it!
- * ============================================================
+ * ESP32 SENDER — Smart Traffic System
+ * Receives commands from PC via USB, forwards via ESP-NOW.
+ * USB Baud: 115200 | Struct: 10 bytes
  */
-
 #include <esp_now.h>
 #include <WiFi.h>
 
-// ─── CONFIGURATION ──────────────────────────────────────────
-// Replace with the MAC address of your RECEIVER ESP32.
-// To find it, upload the "get_mac" sketch below to the receiver
-// and read Serial Monitor.
-uint8_t RECEIVER_MAC[] = {0xA0, 0xA3, 0xB3, 0x2A, 0xC1, 0xE0};
-// Example: {0x24, 0x6F, 0x28, 0xAA, 0xBB, 0xCC}
+// Receiver MAC address
+uint8_t RECEIVER_MAC[] = {0x80, 0xF3, 0xDA, 0x63, 0x3F, 0xA0};
 
-#define LED_PIN       2        // Built-in LED for status
-#define SERIAL_BAUD   115200
-#define MAX_MSG_LEN   64
+#define LED_PIN 2
 
-// ─── DATA STRUCTURE ─────────────────────────────────────────
-// Must match the receiver's struct exactly
+// Must match receiver struct EXACTLY
 typedef struct {
-  char type;          // 'D' = density, 'E' = emergency, 'S' = signal states
-  uint8_t lane;       // emergency lane (1-4), or 0 for none
-  uint8_t counts[4];  // vehicle counts per lane
-  char states[4];     // signal states: 'R', 'Y', 'G' per lane
-} TrafficData;
+  char type;          // 'D','E','S'
+  uint8_t lane;       // emergency lane 1-4, 0=none
+  uint8_t counts[4];  // vehicle counts
+  char states[4];     // signal R/Y/G
+} TrafficData;        // = 10 bytes
 
 TrafficData outgoing;
-
-// ─── ESP-NOW CALLBACK ───────────────────────────────────────
-bool lastSendSuccess = false;
+bool lastSendOK = false;
 
 void onDataSent(const wifi_tx_info_t *info, esp_now_send_status_t status) {
-  lastSendSuccess = (status == ESP_NOW_SEND_SUCCESS);
-  if (lastSendSuccess) {
-    digitalWrite(LED_PIN, !digitalRead(LED_PIN));  // Toggle LED
-  }
+  lastSendOK = (status == ESP_NOW_SEND_SUCCESS);
+  if (lastSendOK) digitalWrite(LED_PIN, !digitalRead(LED_PIN));
 }
 
-// ─── SETUP ──────────────────────────────────────────────────
 void setup() {
-  Serial.begin(SERIAL_BAUD);
+  Serial.begin(115200);
   pinMode(LED_PIN, OUTPUT);
-  digitalWrite(LED_PIN, LOW);
 
-  // Init WiFi in Station mode (required for ESP-NOW)
   WiFi.mode(WIFI_STA);
   WiFi.disconnect();
 
   Serial.println("================================");
   Serial.println(" ESP32 SENDER — Smart Traffic");
   Serial.println("================================");
-  Serial.print("MAC Address: ");
+  Serial.print("MAC: ");
   Serial.println(WiFi.macAddress());
 
-  // Init ESP-NOW
   if (esp_now_init() != ESP_OK) {
     Serial.println("ERROR: ESP-NOW init failed!");
     return;
   }
-
   esp_now_register_send_cb(onDataSent);
 
-  // Register receiver as peer
-  esp_now_peer_info_t peerInfo = {};
-  memcpy(peerInfo.peer_addr, RECEIVER_MAC, 6);
-  peerInfo.channel = 0;
-  peerInfo.encrypt = false;
+  esp_now_peer_info_t peer;
+  memset(&peer, 0, sizeof(peer));
+  memcpy(peer.peer_addr, RECEIVER_MAC, 6);
+  peer.channel = 0;
+  peer.encrypt = false;
 
-  if (esp_now_add_peer(&peerInfo) != ESP_OK) {
-    Serial.println("ERROR: Failed to add peer!");
-    return;
+  if (esp_now_add_peer(&peer) != ESP_OK) {
+    Serial.println("ERROR: Add peer failed!");
   }
 
-  Serial.println("ESP-NOW initialized. Waiting for commands...");
-  Serial.println("Receiver MAC set to: ");
+  Serial.print("Receiver MAC: ");
   for (int i = 0; i < 6; i++) {
-    Serial.printf("%02X", RECEIVER_MAC[i]);
+    if (RECEIVER_MAC[i] < 0x10) Serial.print("0");
+    Serial.print(RECEIVER_MAC[i], HEX);
     if (i < 5) Serial.print(":");
   }
+  Serial.println("\nReady!");
+}
+
+void sendData() {
+  esp_err_t r = esp_now_send(RECEIVER_MAC, (uint8_t *)&outgoing, sizeof(outgoing));
+  Serial.print(r == ESP_OK ? "OK" : "FAIL");
   Serial.println();
 }
 
-// ─── PARSE & SEND ───────────────────────────────────────────
-void parseDensity(String data) {
-  // Format: "c1,c2,c3,c4"
-  int values[4] = {0, 0, 0, 0};
-  int idx = 0;
-  int start = 0;
-
-  for (int i = 0; i <= data.length() && idx < 4; i++) {
-    if (i == data.length() || data.charAt(i) == ',') {
-      values[idx] = data.substring(start, i).toInt();
-      idx++;
-      start = i + 1;
-    }
-  }
-
-  outgoing.type = 'D';
-  outgoing.lane = 0;
-  for (int i = 0; i < 4; i++) {
-    outgoing.counts[i] = constrain(values[i], 0, 255);
-  }
-
-  esp_err_t result = esp_now_send(RECEIVER_MAC, (uint8_t *)&outgoing, sizeof(outgoing));
-
-  Serial.printf("TX DEN: [%d, %d, %d, %d] → %s\n",
-                outgoing.counts[0], outgoing.counts[1],
-                outgoing.counts[2], outgoing.counts[3],
-                result == ESP_OK ? "OK" : "FAIL");
-}
-
-void parseEmergency(String data) {
-  int lane = data.toInt();
-
-  outgoing.type = 'E';
-  outgoing.lane = constrain(lane, 0, 4);
-  memset(outgoing.counts, 0, 4);
-
-  esp_err_t result = esp_now_send(RECEIVER_MAC, (uint8_t *)&outgoing, sizeof(outgoing));
-
-  Serial.printf("TX EMG: Lane %d → %s\n",
-                outgoing.lane,
-                result == ESP_OK ? "OK" : "FAIL");
-}
-
-void parseSignal(String data) {
-  // Format: "R,G,R,R"
-  char sigs[4] = {'R', 'R', 'R', 'R'};
-  int idx = 0;
-  int start = 0;
-
-  for (int i = 0; i <= data.length() && idx < 4; i++) {
-    if (i == data.length() || data.charAt(i) == ',') {
-      if (start < data.length()) {
-        sigs[idx] = data.charAt(start);
-      }
-      idx++;
-      start = i + 1;
-    }
-  }
-
-  outgoing.type = 'S';
-  outgoing.lane = 0;
-  memset(outgoing.counts, 0, 4);
-  for (int i = 0; i < 4; i++) {
-    outgoing.states[i] = sigs[i];
-  }
-
-  esp_err_t result = esp_now_send(RECEIVER_MAC, (uint8_t *)&outgoing, sizeof(outgoing));
-
-  Serial.printf("TX SIG: [%c, %c, %c, %c] %s\n",
-                outgoing.states[0], outgoing.states[1],
-                outgoing.states[2], outgoing.states[3],
-                result == ESP_OK ? "OK" : "FAIL");
-}
-
-// ─── MAIN LOOP ──────────────────────────────────────────────
 void loop() {
-  if (Serial.available()) {
-    String line = Serial.readStringUntil('\n');
-    line.trim();
+  if (!Serial.available()) return;
 
-    if (line.startsWith("DEN:")) {
-      parseDensity(line.substring(4));
+  String line = Serial.readStringUntil('\n');
+  line.trim();
+  if (line.length() == 0) return;
+
+  if (line.startsWith("SIG:")) {
+    // Parse "R,G,R,R"
+    String d = line.substring(4);
+    outgoing.type = 'S';
+    outgoing.lane = 0;
+    memset(outgoing.counts, 0, 4);
+    int idx = 0;
+    for (unsigned int i = 0; i < d.length() && idx < 4; i++) {
+      char c = d.charAt(i);
+      if (c == 'R' || c == 'G' || c == 'Y') {
+        outgoing.states[idx++] = c;
+        while (i + 1 < d.length() && d.charAt(i + 1) != ',') i++;
+      }
     }
-    else if (line.startsWith("EMG:")) {
-      parseEmergency(line.substring(4));
+    while (idx < 4) outgoing.states[idx++] = 'R';
+    Serial.printf("TX SIG [%c,%c,%c,%c] ", outgoing.states[0], outgoing.states[1], outgoing.states[2], outgoing.states[3]);
+    sendData();
+  }
+  else if (line.startsWith("DEN:")) {
+    String d = line.substring(4);
+    outgoing.type = 'D';
+    outgoing.lane = 0;
+    memset(outgoing.states, 0, 4);
+    int idx = 0, start = 0;
+    for (unsigned int i = 0; i <= d.length() && idx < 4; i++) {
+      if (i == d.length() || d.charAt(i) == ',') {
+        outgoing.counts[idx++] = d.substring(start, i).toInt();
+        start = i + 1;
+      }
     }
-    else if (line.startsWith("SIG:")) {
-      parseSignal(line.substring(4));
-    }
-    else if (line == "PING") {
-      Serial.println("PONG");
-    }
-    else if (line.length() > 0) {
-      Serial.println("ERR: Unknown command: " + line);
-    }
+    Serial.printf("TX DEN [%d,%d,%d,%d] ", outgoing.counts[0], outgoing.counts[1], outgoing.counts[2], outgoing.counts[3]);
+    sendData();
+  }
+  else if (line.startsWith("EMG:")) {
+    outgoing.type = 'E';
+    outgoing.lane = line.substring(4).toInt();
+    memset(outgoing.counts, 0, 4);
+    memset(outgoing.states, 0, 4);
+    Serial.printf("TX EMG lane=%d ", outgoing.lane);
+    sendData();
+  }
+  else if (line == "PING") {
+    Serial.println("PONG");
+  }
+  else {
+    Serial.println("ERR: " + line);
   }
 }
-
-/*
- * ============================================================
- *  HELPER: Upload this to the RECEIVER ESP32 first to get
- *  its MAC address, then paste it into RECEIVER_MAC above.
- * ============================================================
- *
- *  #include <WiFi.h>
- *
- *  void setup() {
- *    Serial.begin(115200);
- *    WiFi.mode(WIFI_STA);
- *    Serial.println();
- *    Serial.print("Receiver MAC: ");
- *    Serial.println(WiFi.macAddress());
- *  }
- *
- *  void loop() {}
- *
- * ============================================================
- */

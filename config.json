@@ -15,9 +15,9 @@
         "2": 1,
         "3": 2
     },
-    "esp32_port": "COM3",
+    "esp32_port": "COM8",
     "esp32_baud": 115200,
-    "esp32_enabled": false,
+    "esp32_enabled": true,
     "aruco_boundary_map": {
         "4": "B_TR",
         "5": "B_TL",
