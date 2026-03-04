@@ -1,34 +1,81 @@
 import time
 
 class TrafficController:
+    """
+    Traffic light controller for static prototype.
+    Densest lane always gets green first and longest.
+    Always cycles through ALL 4 lanes.
+    """
     def __init__(self):
         self.num_lanes = 4
-        self.current_green_lane = 0 # 0 to 3
-        self.state = "GREEN" # GREEN, YELLOW, RED_ALL
+        self.current_green_lane = -1  # Will be set on first update
+        self.state = "INIT"  # INIT, GREEN, YELLOW, RED_ALL
         
         self.start_time = time.time()
-        self.green_duration = 5 # Default, will be dynamic
+        self.green_duration = 5
         self.yellow_duration = 2
         self.red_clearance_duration = 1
         
-        # density metrics
+        # Density metrics
         self.densities = [0, 0, 0, 0]
         
-    def update(self, densities):
+        # Priority queue: lanes sorted by density each cycle
+        self._cycle_order = []
+        self._cycle_index = 0
+        self._needs_reorder = True  # Force sort on first update
+        
+        # Emergency Override State
+        self.emergency_lane = None
+        self.pre_emergency_state = None
+        self.pre_emergency_lane = -1
+        
+    def update(self, densities, emergency_lane=None):
         """
         Updates the traffic light state based on time and densities.
-        densities: List of vehicle counts per lane [N, E, S, W]
+        Immediately sorts by density on first call and at each cycle start.
+        Handles emergency vehicle override.
         """
         self.densities = densities
         current_time = time.time()
+        
+        # --- Handle Emergency Toggle ---
+        if emergency_lane is not None and emergency_lane != self.emergency_lane:
+            # Entering emergency mode
+            print(f"🚦 TRAFFIC LOGIC: Emergency Override triggered for Lane {emergency_lane + 1}!")
+            self.pre_emergency_state = self.state
+            self.pre_emergency_lane = self.current_green_lane
+            self.emergency_lane = emergency_lane
+            self.state = "EMERGENCY"
+            self.current_green_lane = emergency_lane
+            return self.get_light_states()
+            
+        elif emergency_lane is None and self.emergency_lane is not None:
+            # Exiting emergency mode
+            print("🚦 TRAFFIC LOGIC: Emergency Override cleared. Resuming normal operation.")
+            self.emergency_lane = None
+            # Force an all-red state before giving green back to anyone for safety
+            self.state = "RED_ALL"
+            self.start_time = current_time
+            return self.get_light_states()
+            
+        # If we are currently IN an emergency, just hold the state
+        if self.state == "EMERGENCY":
+            return self.get_light_states()
+            
+        # --- Normal Operation ---
         elapsed = current_time - self.start_time
         
+        # First call: immediately start with densest lane
+        if self.state == "INIT":
+            self._reorder_by_density()
+            self._cycle_index = 0
+            self.current_green_lane = self._cycle_order[0]
+            self._calculate_green_duration()
+            self.state = "GREEN"
+            self.start_time = current_time
+            return self.get_light_states()
+        
         if self.state == "GREEN":
-            # Check if density is high in other lanes to switch early? 
-            # Or just stick to calculated duration.
-            # Simple logic: Fixed duration based on density at start of green.
-            pass
-            
             if elapsed > self.green_duration:
                 self.state = "YELLOW"
                 self.start_time = current_time
@@ -47,35 +94,57 @@ class TrafficController:
 
         return self.get_light_states()
 
-    def _switch_to_next_lane(self):
-        # Round robin for now, but can be smart (skip empty lanes)
-        self.current_green_lane = (self.current_green_lane + 1) % self.num_lanes
+    def _reorder_by_density(self):
+        """Sort lanes by density descending. Only include lanes with vehicles."""
+        active_lanes = [i for i in range(self.num_lanes) if self.densities[i] > 0]
         
-        # Simple skip logic: if next lane empty, try next
-        # (Prevent infinite loop if all empty)
-        original_next = self.current_green_lane
-        for _ in range(3):
-            if self.densities[self.current_green_lane] == 0:
-                 self.current_green_lane = (self.current_green_lane + 1) % self.num_lanes
-            else:
-                break
+        if active_lanes:
+            # Sort active lanes by density (densest first)
+            self._cycle_order = sorted(
+                active_lanes,
+                key=lambda i: self.densities[i],
+                reverse=True
+            )
+        else:
+            # No vehicles anywhere — fallback to round-robin all lanes
+            self._cycle_order = list(range(self.num_lanes))
+
+    def _switch_to_next_lane(self):
+        """Move to next lane. Re-sort by density at start of each cycle."""
+        self._cycle_index += 1
+        
+        if self._cycle_index >= len(self._cycle_order):
+            # New cycle: re-sort by current density
+            self._cycle_index = 0
+            self._reorder_by_density()
+        
+        self.current_green_lane = self._cycle_order[self._cycle_index]
         
     def _calculate_green_duration(self):
-        # Dynamic duration based on vehicle count
-        # E.g., 2 seconds per vehicle, min 5s, max 30s
+        """
+        Green duration proportional to density.
+        3 seconds per vehicle, min 4s, max 20s.
+        """
         count = self.densities[self.current_green_lane]
-        self.green_duration = max(5, min(30, count * 2))
+        total = sum(self.densities)
+        
+        if total == 0:
+            # No cars anywhere: short equal time (fallback)
+            self.green_duration = 4
+        else:
+            # Proportional: 3s per car, min 4s
+            self.green_duration = max(4, min(20, count * 3))
 
     def get_light_states(self):
-        """
-        Returns a list of states for each lane: 'R', 'Y', 'G'
-        """
+        """Returns a list of states for each lane: 'R', 'Y', 'G'"""
         states = ['R'] * 4
         
-        if self.state == "GREEN":
-            states[self.current_green_lane] = 'G'
+        if self.state == "GREEN" or self.state == "EMERGENCY":
+            if 0 <= self.current_green_lane < 4:
+                states[self.current_green_lane] = 'G'
         elif self.state == "YELLOW":
-            states[self.current_green_lane] = 'Y'
-        # else RED_ALL, all remain 'R'
+            if 0 <= self.current_green_lane < 4:
+                states[self.current_green_lane] = 'Y'
+        # INIT and RED_ALL: all remain 'R'
         
         return states

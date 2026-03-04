@@ -10,6 +10,7 @@
  *    DEN:c1,c2,c3,c4\n   — lane densities
  *    EMG:lane\n            — emergency on lane (1-4)
  *    EMG:0\n               — cancel emergency
+ *    SIG:s1,s2,s3,s4\n    — signal states (R/Y/G per lane)
  * 
  *  Wiring:
  *    USB cable to PC — that's it!
@@ -23,7 +24,7 @@
 // Replace with the MAC address of your RECEIVER ESP32.
 // To find it, upload the "get_mac" sketch below to the receiver
 // and read Serial Monitor.
-uint8_t RECEIVER_MAC[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
+uint8_t RECEIVER_MAC[] = {0xA0, 0xA3, 0xB3, 0x2A, 0xC1, 0xE0};
 // Example: {0x24, 0x6F, 0x28, 0xAA, 0xBB, 0xCC}
 
 #define LED_PIN       2        // Built-in LED for status
@@ -33,9 +34,10 @@ uint8_t RECEIVER_MAC[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
 // ─── DATA STRUCTURE ─────────────────────────────────────────
 // Must match the receiver's struct exactly
 typedef struct {
-  char type;          // 'D' = density, 'E' = emergency
+  char type;          // 'D' = density, 'E' = emergency, 'S' = signal states
   uint8_t lane;       // emergency lane (1-4), or 0 for none
   uint8_t counts[4];  // vehicle counts per lane
+  char states[4];     // signal states: 'R', 'Y', 'G' per lane
 } TrafficData;
 
 TrafficData outgoing;
@@ -43,7 +45,7 @@ TrafficData outgoing;
 // ─── ESP-NOW CALLBACK ───────────────────────────────────────
 bool lastSendSuccess = false;
 
-void onDataSent(const uint8_t *mac_addr, esp_now_send_status_t status) {
+void onDataSent(const wifi_tx_info_t *info, esp_now_send_status_t status) {
   lastSendSuccess = (status == ESP_NOW_SEND_SUCCESS);
   if (lastSendSuccess) {
     digitalWrite(LED_PIN, !digitalRead(LED_PIN));  // Toggle LED
@@ -137,6 +139,37 @@ void parseEmergency(String data) {
                 result == ESP_OK ? "OK" : "FAIL");
 }
 
+void parseSignal(String data) {
+  // Format: "R,G,R,R"
+  char sigs[4] = {'R', 'R', 'R', 'R'};
+  int idx = 0;
+  int start = 0;
+
+  for (int i = 0; i <= data.length() && idx < 4; i++) {
+    if (i == data.length() || data.charAt(i) == ',') {
+      if (start < data.length()) {
+        sigs[idx] = data.charAt(start);
+      }
+      idx++;
+      start = i + 1;
+    }
+  }
+
+  outgoing.type = 'S';
+  outgoing.lane = 0;
+  memset(outgoing.counts, 0, 4);
+  for (int i = 0; i < 4; i++) {
+    outgoing.states[i] = sigs[i];
+  }
+
+  esp_err_t result = esp_now_send(RECEIVER_MAC, (uint8_t *)&outgoing, sizeof(outgoing));
+
+  Serial.printf("TX SIG: [%c, %c, %c, %c] %s\n",
+                outgoing.states[0], outgoing.states[1],
+                outgoing.states[2], outgoing.states[3],
+                result == ESP_OK ? "OK" : "FAIL");
+}
+
 // ─── MAIN LOOP ──────────────────────────────────────────────
 void loop() {
   if (Serial.available()) {
@@ -148,6 +181,9 @@ void loop() {
     }
     else if (line.startsWith("EMG:")) {
       parseEmergency(line.substring(4));
+    }
+    else if (line.startsWith("SIG:")) {
+      parseSignal(line.substring(4));
     }
     else if (line == "PING") {
       Serial.println("PONG");

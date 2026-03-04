@@ -80,7 +80,7 @@ class ArUcoLaneAssigner(QMainWindow):
 
         # State
         self.cap = None
-        self.aruco_dict = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_4X4_50)
+        self.aruco_dict = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_ARUCO_MIP_36h12)
         self.aruco_params = cv2.aruco.DetectorParameters()
         self.detector = cv2.aruco.ArucoDetector(self.aruco_dict, self.aruco_params)
         self.detected_markers = {}  # id -> corners
@@ -94,18 +94,22 @@ class ArUcoLaneAssigner(QMainWindow):
         self.init_ui()
 
     def load_config(self):
-        """Load existing aruco-lane assignments from config."""
+        """Load existing aruco-lane and boundary assignments from config."""
         if os.path.exists(CONFIG_FILE):
             try:
                 with open(CONFIG_FILE) as f:
                     cfg = json.load(f)
                     saved = cfg.get("aruco_lane_map", {})
                     self.assignments = {str(k): int(v) for k, v in saved.items()}
+                    
+                    bounds = cfg.get("aruco_boundary_map", {})
+                    for k, v in bounds.items():
+                        self.assignments[str(k)] = str(v)
             except:
                 pass
 
     def save_config(self):
-        """Save aruco-lane assignments to config.json."""
+        """Save assignments to config.json separating lanes and boundaries."""
         cfg = {}
         if os.path.exists(CONFIG_FILE):
             try:
@@ -113,7 +117,10 @@ class ArUcoLaneAssigner(QMainWindow):
                     cfg = json.load(f)
             except:
                 pass
-        cfg["aruco_lane_map"] = {str(k): v for k, v in self.assignments.items()}
+        
+        cfg["aruco_lane_map"] = {str(k): v for k, v in self.assignments.items() if isinstance(v, int)}
+        cfg["aruco_boundary_map"] = {str(k): v for k, v in self.assignments.items() if isinstance(v, str)}
+        
         with open(CONFIG_FILE, 'w') as f:
             json.dump(cfg, f, indent=4)
 
@@ -196,14 +203,18 @@ class ArUcoLaneAssigner(QMainWindow):
 
         right.addWidget(saved_group)
 
-        # Lane Legend
-        legend_group = QGroupBox("🚦 Lane Colors")
+        # Legend
+        legend_group = QGroupBox("🚦 Legend")
         legend_layout = QVBoxLayout(legend_group)
         for i in range(4):
             lane_label = QLabel(f"  ■  Lane {i+1}")
             lane_label.setFont(QFont("Consolas", 11, QFont.Weight.Bold))
             lane_label.setStyleSheet(f"color: {LANE_QCOLORS[i].name()}; padding: 3px;")
             legend_layout.addWidget(lane_label)
+        bound_label = QLabel(f"  ■  Boundary")
+        bound_label.setFont(QFont("Consolas", 11, QFont.Weight.Bold))
+        bound_label.setStyleSheet("color: #cccccc; padding: 3px;")
+        legend_layout.addWidget(bound_label)
         right.addWidget(legend_group)
 
         main_layout.addLayout(right, stretch=2)
@@ -249,15 +260,58 @@ class ArUcoLaneAssigner(QMainWindow):
 
         if ids is not None:
             ids_flat = ids.flatten()
+            
+            # --- Draw boundary connections if assigned ---
+            bound_pts = {"B_TL": None, "B_TR": None, "B_BR": None, "B_BL": None}
+            bound_coords = {
+                "B_TL": "(0, 40)",
+                "B_TR": "(90, 40)",
+                "B_BR": "(90, 0)",
+                "B_BL": "(0, 0)"
+            }
+            
+            # First pass: find boundary marker centers
+            for i, marker_id in enumerate(ids_flat):
+                mid = str(int(marker_id))
+                if mid in self.assignments:
+                    val = self.assignments[mid]
+                    if isinstance(val, str) and val.startswith("B_"):
+                        center = np.mean(corners[i][0], axis=0).astype(int)
+                        bound_pts[val] = center
+
+            # Draw black connecting lines for boundaries
+            if any(p is not None for p in bound_pts.values()):
+                order = ["B_TL", "B_TR", "B_BR", "B_BL"]
+                valid_pts = []
+                for b_type in order:
+                    if bound_pts[b_type] is not None:
+                        valid_pts.append(bound_pts[b_type])
+                
+                # Draw polygon
+                if len(valid_pts) > 1:
+                    cv2.polylines(display, [np.array(valid_pts)], isClosed=True, color=(0, 0, 0), thickness=3)
+
+                # Draw coordinate labels
+                for b_type, pt in bound_pts.items():
+                    if pt is not None:
+                        cv2.circle(display, tuple(pt), 6, (0, 0, 0), -1)
+                        cv2.putText(display, bound_coords[b_type], (pt[0] - 25, pt[1] - 15),
+                                   cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 2)
+
+            # Second pass: draw normal marker highlights and labels
             for i, marker_id in enumerate(ids_flat):
                 mid = str(int(marker_id))
                 pts = corners[i][0].astype(int)
 
-                # Get assigned lane color or default white
+                # Get assigned color/label
                 if mid in self.assignments:
-                    lane = self.assignments[mid]
-                    color = LANE_COLORS[lane - 1]
-                    label = f"ID:{mid} -> Lane {lane}"
+                    val = self.assignments[mid]
+                    if isinstance(val, int):
+                        color = LANE_COLORS[val - 1]
+                        label = f"ID:{mid} -> Lane {val}"
+                    else:
+                        color = (200, 200, 200)
+                        label = f"ID:{mid} -> {val.replace('B_', 'Bound ')}"
                 else:
                     color = (255, 255, 255)
                     label = f"ID:{mid} (unassigned)"
@@ -319,22 +373,33 @@ class ArUcoLaneAssigner(QMainWindow):
             id_item.setFont(QFont("Consolas", 12, QFont.Weight.Bold))
             self.marker_table.setItem(row, 0, id_item)
 
-            # Lane combo
+            # Assignment combo
             combo = QComboBox()
-            combo.addItem("— Select Lane —")
+            combo.addItem("— Select Assignment —", userData=None)
             for lane in range(1, 5):
-                combo.addItem(f"Lane {lane}")
+                combo.addItem(f"Lane {lane}", userData=lane)
+            combo.addItem("Boundary Top-Left", userData="B_TL")
+            combo.addItem("Boundary Top-Right", userData="B_TR")
+            combo.addItem("Boundary Bottom-Right", userData="B_BR")
+            combo.addItem("Boundary Bottom-Left", userData="B_BL")
+            
             # Pre-select if already assigned
             if mid in self.assignments:
-                combo.setCurrentIndex(self.assignments[mid])
-            combo.setProperty("marker_id", mid)
-            combo.currentIndexChanged.connect(lambda idx, m=mid: self.on_lane_selected(m, idx))
+                idx = combo.findData(self.assignments[mid])
+                if idx >= 0:
+                    combo.setCurrentIndex(idx)
+            combo.currentIndexChanged.connect(lambda idx, c=combo, m=mid: self.on_item_selected(m, c))
             self.marker_table.setCellWidget(row, 1, combo)
 
             # Status
             if mid in self.assignments:
-                status = QTableWidgetItem(f"  ✅ Lane {self.assignments[mid]}")
-                status.setForeground(LANE_QCOLORS[self.assignments[mid] - 1])
+                val = self.assignments[mid]
+                if isinstance(val, int):
+                    status = QTableWidgetItem(f"  ✅ Lane {val}")
+                    status.setForeground(LANE_QCOLORS[val - 1])
+                else:
+                    status = QTableWidgetItem(f"  ⬜ {val.replace('B_', 'Bound ')}")
+                    status.setForeground(QColor(200, 200, 200))
             else:
                 status = QTableWidgetItem("  ⏳ Pending")
                 status.setForeground(QColor(150, 150, 150))
@@ -344,22 +409,26 @@ class ArUcoLaneAssigner(QMainWindow):
         self.marker_table.resizeRowsToContents()
         self.statusBar().showMessage(f"Found {len(ids_flat)} markers. Assign lanes and click Save.")
 
-    def on_lane_selected(self, marker_id, lane_index):
-        """When user selects a lane for a marker."""
-        if lane_index == 0:
-            # "Select Lane" chosen, remove assignment
+    def on_item_selected(self, marker_id, combo):
+        """When user selects a lane or boundary for a marker."""
+        val = combo.currentData()
+        if val is None:
             self.assignments.pop(marker_id, None)
         else:
-            self.assignments[marker_id] = lane_index  # 1-4
+            self.assignments[marker_id] = val
 
         # Update status column
         for row in range(self.marker_table.rowCount()):
             id_item = self.marker_table.item(row, 0)
             if id_item and marker_id in id_item.text():
                 if marker_id in self.assignments:
-                    lane = self.assignments[marker_id]
-                    status = QTableWidgetItem(f"  ✅ Lane {lane}")
-                    status.setForeground(LANE_QCOLORS[lane - 1])
+                    val = self.assignments[marker_id]
+                    if isinstance(val, int):
+                        status = QTableWidgetItem(f"  ✅ Lane {val}")
+                        status.setForeground(LANE_QCOLORS[val - 1])
+                    else:
+                        status = QTableWidgetItem(f"  ⬜ {val.replace('B_', 'Bound ')}")
+                        status.setForeground(QColor(200, 200, 200))
                 else:
                     status = QTableWidgetItem("  ⏳ Pending")
                     status.setForeground(QColor(150, 150, 150))
@@ -372,28 +441,39 @@ class ArUcoLaneAssigner(QMainWindow):
     def refresh_saved_table(self):
         """Update the saved assignments table."""
         self.saved_table.setRowCount(len(self.assignments))
-        for row, (mid, lane) in enumerate(sorted(self.assignments.items(), key=lambda x: int(x[0]))):
+        for row, (mid, val) in enumerate(sorted(self.assignments.items(), key=lambda x: int(x[0]))):
             id_item = QTableWidgetItem(f"  Marker {mid}")
             id_item.setFont(QFont("Consolas", 11, QFont.Weight.Bold))
             id_item.setFlags(id_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
             self.saved_table.setItem(row, 0, id_item)
 
-            lane_item = QTableWidgetItem(f"  Lane {lane}")
-            lane_item.setForeground(LANE_QCOLORS[lane - 1])
-            lane_item.setFont(QFont("Consolas", 11, QFont.Weight.Bold))
-            lane_item.setFlags(lane_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-            self.saved_table.setItem(row, 1, lane_item)
+            if isinstance(val, int):
+                val_item = QTableWidgetItem(f"  Lane {val}")
+                val_item.setForeground(LANE_QCOLORS[val - 1])
+            else:
+                val_item = QTableWidgetItem(f"  {val.replace('B_', 'Bound ')}")
+                val_item.setForeground(QColor(200, 200, 200))
+                
+            val_item.setFont(QFont("Consolas", 11, QFont.Weight.Bold))
+            val_item.setFlags(val_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            self.saved_table.setItem(row, 1, val_item)
 
     def save_all(self):
         """Save all assignments to config.json."""
         if not self.assignments:
-            QMessageBox.warning(self, "Nothing to Save", "Assign at least one marker to a lane first.")
+            QMessageBox.warning(self, "Nothing to Save", "Assign at least one marker first.")
             return
         self.save_config()
         self.refresh_saved_table()
+        
+        lines = []
+        for k, v in sorted(self.assignments.items(), key=lambda x: int(x[0])):
+            label = f"Lane {v}" if isinstance(v, int) else v.replace('B_', 'Bound ')
+            lines.append(f"  Marker {k} → {label}")
+            
         QMessageBox.information(self, "Saved",
-                                f"Saved {len(self.assignments)} marker-lane assignment(s) to config.json!\n\n" +
-                                "\n".join([f"  Marker {k} → Lane {v}" for k, v in sorted(self.assignments.items(), key=lambda x: int(x[0]))]))
+                                f"Saved {len(self.assignments)} marker assignment(s) to config.json!\n\n" +
+                                "\n".join(lines))
 
     def clear_all(self):
         """Clear all assignments."""

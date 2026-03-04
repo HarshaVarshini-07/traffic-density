@@ -19,35 +19,32 @@ class CameraThread(QThread):
         self._mutex = QMutex()
 
     def run(self):
-        self.cap = cv2.VideoCapture(self.source)
+        # Use DirectShow backend on Windows for faster camera init
+        if isinstance(self.source, int):
+            self.cap = cv2.VideoCapture(self.source, cv2.CAP_DSHOW)
+        else:
+            self.cap = cv2.VideoCapture(self.source)
         
         # Optimize camera settings
         if isinstance(self.source, int):
             self.cap.set(cv2.CAP_PROP_FPS, 30)
             self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
-            # Lower resolution for faster processing
             self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
             self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-            # Minimize buffer to get latest frame
             self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
 
         while self.running:
             ret, frame = self.cap.read()
             if ret:
-                # Store latest frame (thread-safe)
                 self._mutex.lock()
                 self._latest_frame = frame
                 self._mutex.unlock()
-                # Emit signal to notify new frame available
                 self.frame_received.emit(frame)
             else:
                 if isinstance(self.source, str):
                     self.cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
                 else:
-                    time.sleep(0.1)
-                    
-            # Cap at ~30 FPS to prevent flooding
-            self.msleep(33)
+                    time.sleep(0.03)
 
         self.cap.release()
 

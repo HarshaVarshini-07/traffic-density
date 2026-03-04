@@ -1,4 +1,4 @@
-/*
+D:\smarttraffic\analyze_prototype_v2.py/*
  * ============================================================
  *  ARDUINO MEGA — Smart Traffic Signal Controller
  * ============================================================
@@ -10,6 +10,7 @@
  *    DEN:c1,c2,c3,c4\n   — lane densities (vehicle counts)
  *    EMG:lane\n            — emergency on lane 1-4
  *    EMG:0\n               — cancel emergency
+ *    SIG:s1,s2,s3,s4\n    — signal states (R/Y/G per lane)
  *
  *  Pin Mapping:
  *    Lane 1: R=22, Y=23, G=24
@@ -76,7 +77,8 @@ const int NUM_RFID_CARDS = sizeof(RFID_CARDS) / sizeof(RFID_CARDS[0]);
 
 enum SystemState {
   STATE_NORMAL,
-  STATE_EMERGENCY
+  STATE_EMERGENCY,
+  STATE_REMOTE      // GUI is controlling LEDs directly via SIG: commands
 };
 
 enum SignalPhase {
@@ -94,6 +96,8 @@ unsigned long greenDuration  = 10000;     // Default 10s green
 unsigned long lastDataTime   = 0;         // Last density data received
 unsigned long lastRfidCheck  = 0;
 unsigned long emergencyStart = 0;
+unsigned long lastSigTime    = 0;           // Last SIG: command received
+const unsigned long REMOTE_TIMEOUT = 10000; // Fall back to local after 10s no SIG
 
 // Lane densities from camera system
 int laneCounts[4] = {0, 0, 0, 0};
@@ -150,7 +154,18 @@ void loop() {
   checkRFID();
 
   // 3. Run state machine
-  if (systemState == STATE_EMERGENCY) {
+  if (systemState == STATE_REMOTE) {
+    // GUI is controlling LEDs — check for timeout
+    if (millis() - lastSigTime > REMOTE_TIMEOUT) {
+      Serial.println("No SIG data for 10s — falling back to local control");
+      systemState = STATE_NORMAL;
+      signalPhase = PHASE_RED_ALL;
+      phaseStartTime = millis();
+      setAllRed();
+    }
+    // Otherwise do nothing — LEDs are set by parseSignalStates()
+  }
+  else if (systemState == STATE_EMERGENCY) {
     handleEmergency();
   } else {
     handleNormal();
@@ -178,6 +193,9 @@ void checkSerial() {
         cancelEmergency();
       }
     }
+    else if (line.startsWith("SIG:")) {
+      parseSignalStates(line.substring(4));
+    }
   }
 
   // Also check USB serial for debugging
@@ -196,6 +214,9 @@ void checkSerial() {
       else if (lane == 0) {
         cancelEmergency();
       }
+    }
+    else if (line.startsWith("SIG:")) {
+      parseSignalStates(line.substring(4));
     }
     else if (line == "STATUS") {
       printStatus();
@@ -224,6 +245,50 @@ void parseDensity(String data) {
 
   Serial.printf("Density: [%d, %d, %d, %d]\n",
                 laneCounts[0], laneCounts[1], laneCounts[2], laneCounts[3]);
+}
+
+void parseSignalStates(String data) {
+  // Format: "R,G,R,R" — directly set LEDs based on GUI decisions
+  char sigs[4] = {'R', 'R', 'R', 'R'};
+  int idx = 0;
+  int start = 0;
+
+  for (unsigned int i = 0; i <= data.length() && idx < 4; i++) {
+    if (i == data.length() || data.charAt(i) == ',') {
+      if (start < data.length()) {
+        sigs[idx] = data.charAt(start);
+      }
+      idx++;
+      start = i + 1;
+    }
+  }
+
+  // Set LEDs directly based on received states
+  for (int lane = 0; lane < 4; lane++) {
+    switch (sigs[lane]) {
+      case 'G':
+        setGreen(lane);
+        // Update tracking
+        if (currentLane != lane) {
+          currentLane = lane;
+        }
+        break;
+      case 'Y':
+        setYellow(lane);
+        break;
+      case 'R':
+      default:
+        digitalWrite(LIGHT_PINS[lane][0], HIGH);  // Red ON
+        digitalWrite(LIGHT_PINS[lane][1], LOW);   // Yellow OFF
+        digitalWrite(LIGHT_PINS[lane][2], LOW);   // Green OFF
+        break;
+    }
+  }
+  // Switch to remote mode — GUI is controlling the LEDs
+  systemState = STATE_REMOTE;
+  lastSigTime = millis();
+  lastDataTime = millis();
+  Serial.printf("SIG: [%c, %c, %c, %c]\n", sigs[0], sigs[1], sigs[2], sigs[3]);
 }
 
 // ─── NORMAL MODE ────────────────────────────────────────────

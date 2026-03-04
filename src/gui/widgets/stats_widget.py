@@ -22,6 +22,53 @@ class StatCard(QFrame):
     def set_value(self, value):
         self.lbl_value.setText(str(value))
 
+class TrafficLightWidget(QWidget):
+    """Mini traffic light with 3 stacked circles (R, Y, G)."""
+    def __init__(self):
+        super().__init__()
+        self.setFixedSize(30, 70)
+        self.state = 'R'
+    
+    def set_state(self, state):
+        self.state = state
+        self.update()
+    
+    def paintEvent(self, event):
+        from PyQt6.QtGui import QPainter, QColor, QBrush, QPen
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        
+        w, h = self.width(), self.height()
+        
+        # Dark housing background
+        painter.setBrush(QBrush(QColor(30, 30, 30)))
+        painter.setPen(QPen(QColor(60, 60, 60), 1))
+        painter.drawRoundedRect(2, 2, w - 4, h - 4, 6, 6)
+        
+        # Light colors: active vs dimmed
+        colors = {
+            'R': (QColor(220, 50, 50) if self.state == 'R' else QColor(60, 20, 20),
+                  QColor(60, 40, 10) if self.state != 'Y' else QColor(240, 200, 40),
+                  QColor(15, 50, 15) if self.state != 'G' else QColor(40, 220, 80)),
+        }
+        
+        red_color = QColor(220, 50, 50) if self.state == 'R' else QColor(60, 20, 20)
+        yellow_color = QColor(240, 200, 40) if self.state == 'Y' else QColor(60, 40, 10)
+        green_color = QColor(40, 220, 80) if self.state == 'G' else QColor(15, 50, 15)
+        
+        cx = w // 2
+        radius = 8
+        spacing = 20
+        start_y = 14
+        
+        for i, color in enumerate([red_color, yellow_color, green_color]):
+            y = start_y + i * spacing
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QBrush(color))
+            painter.drawEllipse(cx - radius, y - radius, radius * 2, radius * 2)
+        
+        painter.end()
+
 class LaneStatRow(QWidget):
     def __init__(self, lane_id):
         super().__init__()
@@ -33,11 +80,16 @@ class LaneStatRow(QWidget):
         self.lbl_name.setStyleSheet("font-weight: bold; color: #BBB;")
         layout.addWidget(self.lbl_name)
         
-        # Status Light
+        # Visual Traffic Light
+        self.traffic_light = TrafficLightWidget()
+        layout.addWidget(self.traffic_light)
+        
+        # Status text label
         self.light_status = QLabel("STOP")
         self.light_status.setObjectName("LightRed")
-        self.light_status.setFixedWidth(60)
+        self.light_status.setFixedWidth(50)
         self.light_status.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.light_status.setStyleSheet("background-color: #CF6679; color: white; border-radius: 4px; padding: 4px; font-weight: bold;")
         layout.addWidget(self.light_status)
         
         # Density Bar
@@ -63,21 +115,19 @@ class LaneStatRow(QWidget):
 
     def update_stat(self, density, light_state):
         self.progress.setValue(density)
+        self.traffic_light.set_state(light_state)
         
         style_base = "color: black; border-radius: 4px; padding: 4px; font-weight: bold;"
         
         if light_state == 'G':
             self.light_status.setText("GO")
             self.light_status.setStyleSheet("background-color: #03DAC6;" + style_base)
-            self.progress.setStyleSheet(self.progress.styleSheet().replace("#00ADB5", "#03DAC6").replace("#FBC02D", "#03DAC6").replace("#CF6679", "#03DAC6"))
         elif light_state == 'Y':
             self.light_status.setText("WAIT")
             self.light_status.setStyleSheet("background-color: #FBC02D;" + style_base)
-            self.progress.setStyleSheet(self.progress.styleSheet().replace("#00ADB5", "#FBC02D").replace("#03DAC6", "#FBC02D").replace("#CF6679", "#FBC02D"))
         else:
             self.light_status.setText("STOP")
             self.light_status.setStyleSheet("background-color: #CF6679; color: white; border-radius: 4px; padding: 4px; font-weight: bold;")
-            self.progress.setStyleSheet(self.progress.styleSheet().replace("#00ADB5", "#CF6679").replace("#03DAC6", "#CF6679").replace("#FBC02D", "#CF6679"))
 
 class TrafficGraph(QWidget):
     def __init__(self):

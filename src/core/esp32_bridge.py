@@ -128,6 +128,19 @@ class ESP32Bridge:
         msg = f"EMG:{lane}"
         self._send(msg)
 
+    def send_states(self, states: list):
+        """
+        Send traffic light states directly to Arduino via ESP32.
+        states: list of 4 strings, each 'R', 'Y', or 'G'
+        Example: ['R', 'G', 'R', 'R'] → SIG:R,G,R,R
+        """
+        if len(states) != 4:
+            logger.error(f"Expected 4 states, got {len(states)}")
+            return
+
+        msg = f"SIG:{states[0]},{states[1]},{states[2]},{states[3]}"
+        self._send(msg)
+
     def ping(self) -> bool:
         """Send PING and wait for PONG response."""
         if not self.connected:

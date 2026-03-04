@@ -15,16 +15,24 @@ sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'libs'))
 import cv2
 import numpy as np
 
-VIDEO_PATH = os.path.join(os.path.dirname(__file__), '..', 'Recording 2026-02-16 123437.mp4')
+VIDEO_SOURCE = 2  # Changed to live camera index (adjust if needed, e.g., 0, 1, 2)
 
 # ArUco dictionary to use
-ARUCO_DICT = cv2.aruco.DICT_4X4_50
+ARUCO_DICT = cv2.aruco.DICT_ARUCO_MIP_36h12
 
 def main():
-    cap = cv2.VideoCapture(VIDEO_PATH)
+    # Use DirectShow for faster initialization on Windows
+    cap = cv2.VideoCapture(VIDEO_SOURCE, cv2.CAP_DSHOW)
     if not cap.isOpened():
-        print(f"ERROR: Cannot open video: {VIDEO_PATH}")
-        return
+        # Fallback to default backend
+        cap = cv2.VideoCapture(VIDEO_SOURCE)
+        if not cap.isOpened():
+            print(f"ERROR: Cannot open camera source: {VIDEO_SOURCE}")
+            return
+            
+    # Optimize camera settings
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
     
     # Setup ArUco detector
     aruco_dict = cv2.aruco.getPredefinedDictionary(ARUCO_DICT)

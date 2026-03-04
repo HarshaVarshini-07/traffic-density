@@ -14,6 +14,7 @@
  *    DEN:c1,c2,c3,c4\n   — lane vehicle counts
  *    EMG:lane\n            — emergency on lane (1-4)
  *    EMG:0\n               — cancel emergency
+ *    SIG:s1,s2,s3,s4\n    — signal states (R/Y/G per lane)
  * ============================================================
  */
 
@@ -27,9 +28,10 @@
 // ─── DATA STRUCTURE ─────────────────────────────────────────
 // Must match the sender's struct exactly
 typedef struct {
-  char type;          // 'D' = density, 'E' = emergency
+  char type;          // 'D' = density, 'E' = emergency, 'S' = signal states
   uint8_t lane;       // emergency lane (1-4), or 0 for none
   uint8_t counts[4];  // vehicle counts per lane
+  char states[4];     // signal states: 'R', 'Y', 'G' per lane
 } TrafficData;
 
 TrafficData incoming;
@@ -65,7 +67,16 @@ void onDataRecv(const esp_now_recv_info_t *info, const uint8_t *data, int len) {
     // Forward emergency to Mega
     String cmd = "EMG:" + String(incoming.lane);
     MEGA_SERIAL.println(cmd);
-    Serial.println("RX→Mega: " + cmd);
+    Serial.println("RX->Mega: " + cmd);
+  }
+  else if (incoming.type == 'S') {
+    // Forward signal states to Mega
+    String cmd = "SIG:" + String(incoming.states[0]) + ","
+                        + String(incoming.states[1]) + ","
+                        + String(incoming.states[2]) + ","
+                        + String(incoming.states[3]);
+    MEGA_SERIAL.println(cmd);
+    Serial.println("RX->Mega: " + cmd);
   }
   else {
     Serial.printf("WARN: Unknown type '%c'\n", incoming.type);

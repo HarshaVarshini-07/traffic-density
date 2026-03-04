@@ -2,7 +2,7 @@ import cv2
 import numpy as np
 
 class ArucoManager:
-    def __init__(self, marker_dict=cv2.aruco.DICT_4X4_50, marker_length=0.05):
+    def __init__(self, marker_dict=cv2.aruco.DICT_ARUCO_MIP_36h12, marker_length=0.05):
         self.dictionary = cv2.aruco.getPredefinedDictionary(marker_dict)
         self.parameters = cv2.aruco.DetectorParameters()
         self.detector = cv2.aruco.ArucoDetector(self.dictionary, self.parameters)
@@ -10,18 +10,24 @@ class ArucoManager:
         self.marker_corners = {}
         self.homography_matrix = None
         self.warped_size = (640, 640) # Target size for top-down view
+        # Cache raw detection results to avoid re-detecting
+        self.last_corners = None
+        self.last_ids = None
 
     def detect_markers(self, frame):
         """
         Detects ArUco markers and updates internal state.
         Expects 4 markers to define the ground plane.
+        Returns (corners, ids) for reuse by overlay drawing.
         """
+        self.marker_corners.clear()  # Clear stale markers each frame
         corners, ids, rejected = self.detector.detectMarkers(frame)
+        self.last_corners = corners
+        self.last_ids = ids
         
         if ids is not None:
-            ids = ids.flatten()
-            for i, marker_id in enumerate(ids):
-                # Store the center of the marker
+            ids_flat = ids.flatten()
+            for i, marker_id in enumerate(ids_flat):
                 marker_center = np.mean(corners[i][0], axis=0)
                 self.marker_corners[marker_id] = marker_center
                 

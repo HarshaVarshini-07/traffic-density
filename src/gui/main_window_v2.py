@@ -60,6 +60,9 @@ class MainWindow(QMainWindow):
         self.controls.start_clicked.connect(self.start_system)
         self.controls.stop_clicked.connect(self.stop_system)
         self.controls.settings_clicked.connect(self.open_settings)
+        self.controls.lock_clicked.connect(self.lock_markers)
+        self.controls.unlock_clicked.connect(self.unlock_markers)
+        self.controls.recalibrate_clicked.connect(self.recalibrate)
         right_layout.addWidget(self.controls, stretch=1)
         
         main_layout.addWidget(right_panel, stretch=1)
@@ -96,6 +99,18 @@ class MainWindow(QMainWindow):
         self.work_thread.finished.connect(self.work_thread.deleteLater)
         
         self.work_thread.start()
+
+    def lock_markers(self):
+        if self.processor:
+            self.processor.lock_markers()
+
+    def unlock_markers(self):
+        if self.processor:
+            self.processor.unlock_markers()
+
+    def recalibrate(self):
+        if self.processor:
+            self.processor.recalibrate()
 
     def stop_system(self):
         if self.processor:

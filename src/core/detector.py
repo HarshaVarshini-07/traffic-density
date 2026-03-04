@@ -143,12 +143,21 @@ class VehicleDetector:
     def annotate(self, frame, detections, show_all=True):
         """
         Draws bounding boxes with labels.
+        Only shows car (class 0) and emergency_vehicle (class 8) on screen.
         """
         if not self.ai_available or detections.class_id is None:
             return frame
 
         try:
-            display_detections = detections
+            # Filter to only show cars and emergency vehicles on screen
+            if self.is_custom_model:
+                visible_mask = np.isin(detections.class_id, [0, 8])  # car, emergency_vehicle
+                display_detections = detections[visible_mask]
+            else:
+                display_detections = detections
+            
+            if display_detections.class_id is None or len(display_detections.class_id) == 0:
+                return frame
             
             # Annotate
             annotated_frame = self.box_annotator.annotate(scene=frame.copy(), detections=display_detections)
