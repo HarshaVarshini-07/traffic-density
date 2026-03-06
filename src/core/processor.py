@@ -11,6 +11,7 @@ from src.core.aruco_manager import ArucoManager
 from src.core.traffic_logic import TrafficController
 from src.core.logger import DataLogger
 from src.core.esp32_bridge import ESP32Bridge
+import threading
 
 CONFIG_FILE = "config.json"
 
@@ -51,6 +52,10 @@ class VideoProcessor(QObject):
         self._detect_every_n = 3  # Increased from 2 to 3 for better FPS
         self._last_detections = None
         self._last_lane_counts = [0, 0, 0, 0]
+        
+        # Async YOLO Threading
+        self._is_detecting = False
+        self._detection_lock = threading.Lock()
         
         # Polling timer for pulling frames
         self._poll_timer = None
@@ -245,61 +250,45 @@ class VideoProcessor(QObject):
             
             emergency_lane = None
             
-            # YOLO detection with frame-skip
-            run_yolo = (self._frame_count % self._detect_every_n == 0) or self._last_detections is None
+            # YOLO detection with frame-skip and async thread
+            run_yolo = (self._frame_count % self._detect_every_n == 0) or (self._last_detections is None)
             
-            if run_yolo:
-                detections = self.detector.detect(frame)
-                self._last_detections = detections
+            if run_yolo and not self._is_detecting:
+                # Kick off detection in a background thread so the GUI doesn't stutter
+                self._is_detecting = True
+                threading.Thread(target=self._run_yolo_async, args=(frame.copy(), marker_positions), daemon=True).start()
                 
-                car_detections = self.detector.get_car_detections(detections)
-                raw_counts = [0, 0, 0, 0]
-                
-                if car_detections.xyxy is not None and len(car_detections.xyxy) > 0:
-                    for box in car_detections.xyxy:
-                        bx = (box[0] + box[2]) / 2
-                        by = (box[1] + box[3]) / 2
-                        car_pt = np.array([bx, by])
-                        
-                        best_lane = None
-                        best_dist = float('inf')
-                        for lane_num, mpos in marker_positions.items():
-                            dist = np.linalg.norm(car_pt - mpos)
-                            if dist < best_dist:
-                                best_dist = dist
-                                best_lane = lane_num
-                        if best_lane is not None and 1 <= best_lane <= 4:
-                            raw_counts[best_lane - 1] += 1
-                
-                # Smoothed lane counts
-                self._count_history.append(raw_counts)
-                if len(self._count_history) > self._smooth_window:
-                    self._count_history.pop(0)
-                avg = np.mean(self._count_history, axis=0)
-                lane_counts = [int(round(v)) for v in avg]
-                self._last_lane_counts = lane_counts
-                
-                # Emergency vehicle via YOLO — detect ALL emergency lanes
-                emg = self.detector.get_emergency_detections(detections)
-                detected_emg_lanes = set()
-                if emg is not None:
-                    for box in emg.xyxy:
-                        ex = (box[0] + box[2]) / 2
-                        ey = (box[1] + box[3]) / 2
-                        emg_pt = np.array([ex, ey])
-                        best_lane = None
-                        best_dist = float('inf')
-                        for lane_num, mpos in marker_positions.items():
-                            dist = np.linalg.norm(emg_pt - mpos)
-                            if dist < best_dist:
-                                best_dist = dist
-                                best_lane = lane_num
-                        if best_lane is not None:
-                            detected_emg_lanes.add(best_lane)
-            else:
+            # Use the latest available detections while we wait for new ones
+            with self._detection_lock:
                 detections = self._last_detections
                 lane_counts = self._last_lane_counts
-                detected_emg_lanes = set()
+            
+            # If no detections yet, just draw empty and return
+            if detections is None:
+                self.processed_signal.emit(frame, [0,0,0,0], ['R']*4)
+                return
+
+            # Compute emergency stuff from the LAST known detections so GUI stays smooth
+            car_detections = self.detector.get_car_detections(detections)
+                
+            # Emergency vehicle via current detections
+            emg = self.detector.get_emergency_detections(detections)
+            detected_emg_lanes = set()
+            if emg is not None:
+                for box in emg.xyxy:
+                    ex = (box[0] + box[2]) / 2
+                    ey = (box[1] + box[3]) / 2
+                    emg_pt = np.array([ex, ey])
+                    best_lane = None
+                    best_dist = float('inf')
+                    for lane_num, mpos in marker_positions.items():
+                        dist = np.linalg.norm(emg_pt - mpos)
+                        if dist < best_dist:
+                            best_dist = dist
+                            best_lane = lane_num
+                    if best_lane is not None:
+                        detected_emg_lanes.add(best_lane)
+            
             
             # Sticky emergency: hold per-lane for minimum duration
             now = time.time()
@@ -365,6 +354,44 @@ class VideoProcessor(QObject):
         except Exception as e:
             print(f"Processing Error: {e}")
             self.processed_signal.emit(frame, [0,0,0,0], ['R']*4)
+
+    def _run_yolo_async(self, frame_copy, marker_positions):
+        """Runs YOLO on a background thread so GUI doesn't stall."""
+        try:
+            detections = self.detector.detect(frame_copy)
+            car_detections = self.detector.get_car_detections(detections)
+            raw_counts = [0, 0, 0, 0]
+            
+            if car_detections.xyxy is not None and len(car_detections.xyxy) > 0:
+                for box in car_detections.xyxy:
+                    bx = (box[0] + box[2]) / 2
+                    by = (box[1] + box[3]) / 2
+                    car_pt = np.array([bx, by])
+                    
+                    best_lane = None
+                    best_dist = float('inf')
+                    for lane_num, mpos in marker_positions.items():
+                        dist = np.linalg.norm(car_pt - mpos)
+                        if dist < best_dist:
+                            best_dist = dist
+                            best_lane = lane_num
+                    if best_lane is not None and 1 <= best_lane <= 4:
+                        raw_counts[best_lane - 1] += 1
+            
+            with self._detection_lock:
+                self._last_detections = detections
+                
+                self._count_history.append(raw_counts)
+                if len(self._count_history) > self._smooth_window:
+                    self._count_history.pop(0)
+                avg = np.mean(self._count_history, axis=0)
+                self._last_lane_counts = [int(round(v)) for v in avg]
+                
+        except Exception as e:
+            print(f"Async YOLO thread crashed: {e}")
+            
+        finally:
+            self._is_detecting = False
 
     def _draw_lane_overlay(self, frame, counts, states, marker_positions, center, boundary_positions):
         """Draw lane zones using locked marker positions."""
