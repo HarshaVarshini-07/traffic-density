@@ -138,12 +138,17 @@ class HardwareTestApp(QMainWindow):
         btn_all_red = QPushButton("🚨 ALL RED 🚨")
         btn_all_red.setStyleSheet("background-color: #AA0000; font-weight: bold; padding: 10px;")
         btn_all_red.clicked.connect(self.set_all_red)
+
+        btn_all_green = QPushButton("🟢 ALL GREEN 🟢")
+        btn_all_green.setStyleSheet("background-color: #00AA00; font-weight: bold; padding: 10px;")
+        btn_all_green.clicked.connect(self.set_all_green)
         
         btn_ping = QPushButton("📡 Send PING 📡")
         btn_ping.setStyleSheet("background-color: #0055AA; font-weight: bold; padding: 10px;")
         btn_ping.clicked.connect(self.send_ping)
         
         macro_layout.addWidget(btn_all_red)
+        macro_layout.addWidget(btn_all_green)
         macro_layout.addWidget(btn_ping)
         macro_group.setLayout(macro_layout)
         layout.addWidget(macro_group)
@@ -203,6 +208,12 @@ class HardwareTestApp(QMainWindow):
     def set_all_red(self):
         for lane in self.lanes:
             lane.current_state = 'R'
+            lane.update_ui()
+        self.send_current_states()
+        
+    def set_all_green(self):
+        for lane in self.lanes:
+            lane.current_state = 'G'
             lane.update_ui()
         self.send_current_states()
         
