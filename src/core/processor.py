@@ -213,6 +213,18 @@ class VideoProcessor(QObject):
                 cv2.putText(frame, name, (px - 20, py - 15),
                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
                            
+            # Live boundary polygon outline during calibration
+            if found_bounds:
+                order = ["B_TL", "B_TR", "B_BR", "B_BL"]
+                valid_pts = []
+                for b_type in order:
+                    if b_type in found_bounds:
+                        valid_pts.append(found_bounds[b_type])
+                
+                if len(valid_pts) > 1:
+                    # Draw a semi-transparent or visible line so user knows they are forming a box
+                    cv2.polylines(frame, [np.array(valid_pts, dtype=np.int32)], isClosed=True, color=(10, 10, 10), thickness=2)
+                           
             # Draw found marker positions with labels (boundaries)
             for b_type, pos in found_bounds.items():
                 px, py = int(pos[0]), int(pos[1])
