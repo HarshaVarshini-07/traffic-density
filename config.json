@@ -19,9 +19,9 @@
     "esp32_baud": 115200,
     "esp32_enabled": true,
     "aruco_boundary_map": {
-        "4": "B_BR",
-        "5": "B_TL",
-        "6": "B_BL",
+        "4": "B_BL",
+        "5": "B_BR",
+        "6": "B_TL",
         "7": "B_TR"
     }
 }
