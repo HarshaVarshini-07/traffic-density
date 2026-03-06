@@ -10,18 +10,18 @@
     "yellow_black_strip_lane": 0,
     "confidence_threshold": 0.3,
     "aruco_lane_map": {
-        "0": 1,
-        "1": 2,
-        "2": 3,
-        "3": 4
+        "0": 3,
+        "1": 4,
+        "2": 1,
+        "3": 2
     },
     "esp32_port": "COM7",
     "esp32_baud": 115200,
     "esp32_enabled": true,
     "aruco_boundary_map": {
-        "4": "B_BR",
+        "4": "B_TR",
         "5": "B_TL",
         "6": "B_BL",
-        "7": "B_TR"
+        "7": "B_BR"
     }
 }
