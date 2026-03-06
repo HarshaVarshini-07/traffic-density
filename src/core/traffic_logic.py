@@ -69,7 +69,10 @@ class TrafficController:
         if self.state == "INIT":
             self._reorder_by_density()
             self._cycle_index = 0
-            self.current_green_lane = self._cycle_order[0]
+            if len(self._cycle_order) > 0:
+                self.current_green_lane = self._cycle_order[0]
+            else:
+                self.current_green_lane = 0
             self._calculate_green_duration()
             self.state = "GREEN"
             self.start_time = current_time
@@ -90,6 +93,7 @@ class TrafficController:
                 self._switch_to_next_lane()
                 self.state = "GREEN"
                 self.start_time = current_time
+                # self._calculate_green_duration() happens inside switch_to_next_lane now, or we do it here:
                 self._calculate_green_duration()
 
         return self.get_light_states()
@@ -118,7 +122,10 @@ class TrafficController:
             self._cycle_index = 0
             self._reorder_by_density()
         
-        self.current_green_lane = self._cycle_order[self._cycle_index]
+        if len(self._cycle_order) > 0:
+            self.current_green_lane = self._cycle_order[self._cycle_index]
+        else:
+            self.current_green_lane = 0
         
     def _calculate_green_duration(self):
         """
