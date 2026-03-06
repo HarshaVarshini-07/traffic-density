@@ -65,12 +65,14 @@ class VideoProcessor(QObject):
         self._smooth_window = 5
         
         # Sticky emergency: hold emergency for minimum duration
+        # Sticky emergency: hold for minimum duration
         self._emergency_lanes = {}  # {lane_num: last_seen_time}
-        self._emergency_hold_time = 10  # seconds to hold emergency
+        self._emergency_hold_time = 2  # Reduce to 2 seconds to clear quickly
         
         # ESP32 optimization
         self._last_sent_counts = None
         self._last_sent_states = None
+        self._last_sent_emergency = 0
         
         self._load_config()
 
@@ -338,15 +340,15 @@ class VideoProcessor(QObject):
                     self.esp32_bridge.send_density(lane_counts)
                     self._last_sent_counts = lane_counts.copy()
                 
-                # We implicitly send emergency overrides via send_states if added to esp32_bridge
-                # but since esp32_bridge only has send_density and send_emergency:
-                if emergency_lane is not None:
-                    # To prevent flooding, we could track emergency state too, 
-                    # but emergency usually needs immediate priority.
-                    self.esp32_bridge.send_emergency(emergency_lane)
-                elif self._last_sent_states != states:
-                    # If emergency cleared, cancel it
-                    self.esp32_bridge.send_emergency(0)
+                # Handle emergency signal sending
+                current_emg = emergency_lane if emergency_lane is not None else 0
+                if self._last_sent_emergency != current_emg:
+                    self.esp32_bridge.send_emergency(current_emg)
+                    self._last_sent_emergency = current_emg
+                
+                # Send the actual traffic light states to the hardware
+                if self._last_sent_states != states:
+                    self.esp32_bridge.send_states(states)
                     self._last_sent_states = states.copy()
             
             self.processed_signal.emit(annotated, lane_counts, states)

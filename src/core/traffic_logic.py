@@ -130,7 +130,7 @@ class TrafficController:
     def _calculate_green_duration(self):
         """
         Green duration proportional to density.
-        3 seconds per vehicle, min 4s, max 20s.
+        3 seconds per vehicle, min 4s, max 30s.
         """
         count = self.densities[self.current_green_lane]
         total = sum(self.densities)
@@ -140,7 +140,7 @@ class TrafficController:
             self.green_duration = 4
         else:
             # Proportional: 3s per car, min 4s
-            self.green_duration = max(4, min(20, count * 3))
+            self.green_duration = max(4, min(30, count * 3))
 
     def get_light_states(self):
         """Returns a list of states for each lane: 'R', 'Y', 'G'"""
