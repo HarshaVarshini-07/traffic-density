@@ -1,5 +1,6 @@
 import sys
 import os
+import random
 
 # Ensure the root directory and libs are in sys.path
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -87,6 +88,9 @@ class HardwareTestApp(QMainWindow):
         
         self.bridge = None
         self.lanes = []
+        self.dj_timer = QTimer()
+        self.dj_timer.timeout.connect(self._dj_tick)
+        self.is_dj_mode = False
         self.setup_ui()
         
     def setup_ui(self):
@@ -143,12 +147,17 @@ class HardwareTestApp(QMainWindow):
         btn_all_green.setStyleSheet("background-color: #00AA00; font-weight: bold; padding: 10px;")
         btn_all_green.clicked.connect(self.set_all_green)
         
+        self.btn_dj = QPushButton("📻 DJ MODE 📻")
+        self.btn_dj.setStyleSheet("background-color: #8800CC; font-weight: bold; padding: 10px;")
+        self.btn_dj.clicked.connect(self.toggle_dj_mode)
+        
         btn_ping = QPushButton("📡 Send PING 📡")
         btn_ping.setStyleSheet("background-color: #0055AA; font-weight: bold; padding: 10px;")
         btn_ping.clicked.connect(self.send_ping)
         
         macro_layout.addWidget(btn_all_red)
         macro_layout.addWidget(btn_all_green)
+        macro_layout.addWidget(self.btn_dj)
         macro_layout.addWidget(btn_ping)
         macro_group.setLayout(macro_layout)
         layout.addWidget(macro_group)
@@ -214,6 +223,35 @@ class HardwareTestApp(QMainWindow):
     def set_all_green(self):
         for lane in self.lanes:
             lane.current_state = 'G'
+            lane.update_ui()
+        self.send_current_states()
+        
+    def toggle_dj_mode(self):
+        if not self.bridge or not self.bridge.connected:
+            self.log("Cannot start DJ MODE: Not connected.")
+            return
+            
+        self.is_dj_mode = not self.is_dj_mode
+        if self.is_dj_mode:
+            self.btn_dj.setText("🛑 STOP DJ MODE 🛑")
+            self.btn_dj.setStyleSheet("background-color: #FF00FF; font-weight: bold; padding: 10px;")
+            self.log("DJ MODE: ON! (Blinking randomly...)")
+            self.dj_timer.start(250)  # Change lights every 250ms
+        else:
+            self.btn_dj.setText("📻 DJ MODE 📻")
+            self.btn_dj.setStyleSheet("background-color: #8800CC; font-weight: bold; padding: 10px;")
+            self.log("DJ MODE: OFF.")
+            self.dj_timer.stop()
+            self.set_all_red()
+            
+    def _dj_tick(self):
+        if not self.bridge or not self.bridge.connected:
+            self.toggle_dj_mode()
+            return
+            
+        colors = ['R', 'Y', 'G']
+        for lane in self.lanes:
+            lane.current_state = random.choice(colors)
             lane.update_ui()
         self.send_current_states()
         
