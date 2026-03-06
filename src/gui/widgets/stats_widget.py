@@ -205,9 +205,11 @@ class StatsWidget(QWidget):
         
         self.stat_fps = StatCard("FPS", "0.0")
         self.stat_total = StatCard("Total Traffic", "0")
+        self.stat_esp = StatCard("ESP32", "OFF")
         
         grid_layout.addWidget(self.stat_fps)
         grid_layout.addWidget(self.stat_total)
+        grid_layout.addWidget(self.stat_esp)
         
         self.layout.addWidget(grid_frame)
         
@@ -251,3 +253,15 @@ class StatsWidget(QWidget):
             self.stat_device.lbl_value.setStyleSheet("color: #03DAC6; font-size: 18px; font-weight: bold;")
         else:
             self.stat_device.lbl_value.setStyleSheet("color: #FBC02D; font-size: 18px; font-weight: bold;")
+
+    def update_esp32_status(self, info: dict):
+        """Update ESP32 connection status display."""
+        if not info.get("enabled", False):
+            self.stat_esp.set_value("OFF")
+            self.stat_esp.lbl_value.setStyleSheet("color: #888888; font-size: 18px; font-weight: bold;")
+        elif info.get("connected", False):
+            self.stat_esp.set_value(f"ON ({info.get('port','?')})")
+            self.stat_esp.lbl_value.setStyleSheet("color: #03DAC6; font-size: 14px; font-weight: bold;")
+        else:
+            self.stat_esp.set_value("ERROR")
+            self.stat_esp.lbl_value.setStyleSheet("color: #CF6679; font-size: 18px; font-weight: bold;")

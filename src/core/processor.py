@@ -1,4 +1,4 @@
-from PyQt6.QtCore import QObject, pyqtSignal, pyqtSlot
+from PyQt6.QtCore import QObject, pyqtSignal, pyqtSlot, QTimer
 import numpy as np
 import cv2
 import json
@@ -48,9 +48,12 @@ class VideoProcessor(QObject):
         
         # Frame-skip for YOLO
         self._frame_count = 0
-        self._detect_every_n = 2
+        self._detect_every_n = 3  # Increased from 2 to 3 for better FPS
         self._last_detections = None
         self._last_lane_counts = [0, 0, 0, 0]
+        
+        # Polling timer for pulling frames
+        self._poll_timer = None
         
         # Rolling average for stable lane counts
         self._count_history = []
@@ -59,6 +62,10 @@ class VideoProcessor(QObject):
         # Sticky emergency: hold emergency for minimum duration
         self._emergency_lanes = {}  # {lane_num: last_seen_time}
         self._emergency_hold_time = 10  # seconds to hold emergency
+        
+        # ESP32 optimization
+        self._last_sent_counts = None
+        self._last_sent_states = None
         
         self._load_config()
 
@@ -108,12 +115,24 @@ class VideoProcessor(QObject):
             self.model_info_signal.emit(self.detector.model_info)
             
             self.camera = CameraThread(self.camera_source)
-            self.camera.frame_received.connect(self.process_frame)
             self.camera.start()
+            
+            # Use a timer to pull frames instead of blocking on signals
+            self._poll_timer = QTimer(self)
+            self._poll_timer.timeout.connect(self._pull_frame)
+            self._poll_timer.start(30)  # ~33fps polling rate
+            
         except Exception as e:
             print(f"Error initializing processor: {e}")
 
-    @pyqtSlot(np.ndarray)
+    @pyqtSlot()
+    def _pull_frame(self):
+        """Actively pull the latest frame from the camera thread to avoid queue lag."""
+        if not self.camera: return
+        frame = self.camera.get_latest_frame()
+        if frame is not None:
+            self.process_frame(frame)
+
     def process_frame(self, frame):
         if self._phase == "CALIBRATING":
             self._calibration_frame(frame)
@@ -324,12 +343,22 @@ class VideoProcessor(QObject):
             if self.logger:
                 self.logger.log(lane_counts, states)
             
-            # ESP32
+            # ESP32 - Only send if data changed to avoid serial bottleneck
             if self.esp32_bridge and self.esp32_bridge.enabled:
-                self.esp32_bridge.send_density(lane_counts)
-                self.esp32_bridge.send_states(states)
+                if self._last_sent_counts != lane_counts:
+                    self.esp32_bridge.send_density(lane_counts)
+                    self._last_sent_counts = lane_counts.copy()
+                
+                # We implicitly send emergency overrides via send_states if added to esp32_bridge
+                # but since esp32_bridge only has send_density and send_emergency:
                 if emergency_lane is not None:
+                    # To prevent flooding, we could track emergency state too, 
+                    # but emergency usually needs immediate priority.
                     self.esp32_bridge.send_emergency(emergency_lane)
+                elif self._last_sent_states != states:
+                    # If emergency cleared, cancel it
+                    self.esp32_bridge.send_emergency(0)
+                    self._last_sent_states = states.copy()
             
             self.processed_signal.emit(annotated, lane_counts, states)
             
@@ -487,6 +516,8 @@ class VideoProcessor(QObject):
 
     @pyqtSlot()
     def stop(self):
+        if self._poll_timer:
+            self._poll_timer.stop()
         if self.camera:
             self.camera.stop()
         if self.esp32_bridge:

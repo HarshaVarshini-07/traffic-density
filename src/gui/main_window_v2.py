@@ -94,6 +94,7 @@ class MainWindow(QMainWindow):
         self.work_thread.started.connect(self.processor.start_processing)
         self.processor.processed_signal.connect(self.update_gui)
         self.processor.model_info_signal.connect(self.stats_widget.update_model_info)
+        self.processor.esp32_status_signal.connect(self.stats_widget.update_esp32_status)
         self.processor.finished.connect(self.work_thread.quit)
         self.processor.finished.connect(self.processor.deleteLater)
         self.work_thread.finished.connect(self.work_thread.deleteLater)

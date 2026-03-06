@@ -8,7 +8,7 @@
 #include <WiFi.h>
 
 #define LED_PIN     2
-#define MEGA_SERIAL Serial2  // TX2=GPIO17, RX2=GPIO16
+#define MEGA_SERIAL Serial1  // TX1=GPIO27, RX1=GPIO26
 
 // Must match sender struct EXACTLY
 typedef struct {
@@ -22,9 +22,35 @@ TrafficData incoming;
 unsigned long rxCount = 0;
 unsigned long lastRxTime = 0;
 
+uint8_t SENDER_MAC[6];
+bool senderMacKnown = false;
+
+void onDataSent(const wifi_tx_info_t *info, esp_now_send_status_t status) {
+  // Optional logging
+}
+
 void onDataRecv(const esp_now_recv_info_t *info, const uint8_t *data, int len) {
+  if (!senderMacKnown) {
+    memcpy(SENDER_MAC, info->src_addr, 6);
+    esp_now_peer_info_t peerInfo;
+    memset(&peerInfo, 0, sizeof(peerInfo));
+    memcpy(peerInfo.peer_addr, SENDER_MAC, 6);
+    peerInfo.channel = 0;
+    peerInfo.encrypt = false;
+    esp_now_add_peer(&peerInfo);
+    senderMacKnown = true;
+    Serial.println("-> SENDER MAC captured for bi-directional link.");
+  }
+
   if (len != sizeof(TrafficData)) {
-    Serial.printf("WARN: size %d != %d\n", len, sizeof(TrafficData));
+    // If the size doesn't match the struct, assume it's a raw chat string and print it
+    char buf[250];
+    int copyLen = len < 249 ? len : 249;
+    memcpy(buf, data, copyLen);
+    buf[copyLen] = '\0';
+    Serial.println();
+    Serial.print("Sender: "); // Show string from sender
+    Serial.println(buf);
     return;
   }
 
@@ -55,8 +81,8 @@ void onDataRecv(const esp_now_recv_info_t *info, const uint8_t *data, int len) {
 }
 
 void setup() {
-  Serial.begin(9600);
-  MEGA_SERIAL.begin(9600);
+  Serial.begin(115200);
+  MEGA_SERIAL.begin(9600, SERIAL_8N1, 26, 27); // RX=26, TX=27
   pinMode(LED_PIN, OUTPUT);
 
   WiFi.mode(WIFI_STA);
@@ -73,6 +99,7 @@ void setup() {
     return;
   }
   esp_now_register_recv_cb(onDataRecv);
+  esp_now_register_send_cb(onDataSent);
   Serial.println("Listening...");
 }
 
@@ -85,11 +112,30 @@ void loop() {
                   lastRxTime > 0 ? millis() - lastRxTime : 0);
   }
 
-  // Forward Mega replies to debug
+  // Forward Mega replies to debug and back to Sender via ESP-NOW
   while (MEGA_SERIAL.available()) {
     String msg = MEGA_SERIAL.readStringUntil('\n');
     msg.trim();
-    if (msg.length() > 0) Serial.println("Mega: " + msg);
+    if (msg.length() > 0) {
+      Serial.println("Mega: " + msg);
+      if (senderMacKnown) {
+        esp_now_send(SENDER_MAC, (uint8_t*)msg.c_str(), msg.length() + 1);
+      }
+    }
+  }
+
+  // Allow USER to chat from the PC Serial Monitor back to the SENDER
+  while (Serial.available()) {
+    String outMsg = Serial.readStringUntil('\n');
+    outMsg.trim();
+    if (outMsg.length() > 0) {
+      if (senderMacKnown) {
+        esp_now_send(SENDER_MAC, (uint8_t*)outMsg.c_str(), outMsg.length() + 1);
+        Serial.println("Me: " + outMsg);
+      } else {
+        Serial.println("ERR: Cannot send, Sender MAC not known yet! (Wait for them to speak first)");
+      }
+    }
   }
 
   delay(10);

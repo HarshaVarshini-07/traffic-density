@@ -27,6 +27,17 @@ void onDataSent(const wifi_tx_info_t *info, esp_now_send_status_t status) {
   if (lastSendOK) digitalWrite(LED_PIN, !digitalRead(LED_PIN));
 }
 
+void onDataRecv(const esp_now_recv_info_t *info, const uint8_t *data, int len) {
+  // If we receive data back from the Receiver (Arduino Mega responses)
+  if (len > 0) {
+    char buf[250];
+    int copyLen = len < 249 ? len : 249;
+    memcpy(buf, data, copyLen);
+    buf[copyLen] = '\0';
+    Serial.println(buf); // Forward to PC
+  }
+}
+
 void setup() {
   Serial.begin(115200);
   pinMode(LED_PIN, OUTPUT);
@@ -45,6 +56,7 @@ void setup() {
     return;
   }
   esp_now_register_send_cb(onDataSent);
+  esp_now_register_recv_cb(onDataRecv);
 
   esp_now_peer_info_t peer;
   memset(&peer, 0, sizeof(peer));
@@ -123,6 +135,9 @@ void loop() {
     Serial.println("PONG");
   }
   else {
-    Serial.println("ERR: " + line);
+    // If it's not a known command format, assume it's a raw chat message from the user
+    // and broadcast it as a raw string to the Receiver
+    esp_now_send(RECEIVER_MAC, (uint8_t*)line.c_str(), line.length() + 1);
+    Serial.println("Me: " + line);
   }
 }

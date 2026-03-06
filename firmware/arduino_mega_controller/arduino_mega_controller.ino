@@ -1,8 +1,8 @@
 /*
  * ARDUINO MEGA — Smart Traffic LED Controller
- * Receives SIG/DEN/EMG from ESP32 via Serial1 (Pin 19).
+ * Receives SIG/DEN/EMG from ESP32 via Serial2 (Pin 17).
  * No RFID, no sensors. All commands from PC.
- * Serial1 Baud: 9600 | USB Baud: 9600
+ * Serial2 Baud: 9600 | USB Baud: 9600
  *
  * Pins: Lane1(22,23,24) Lane2(25,26,27) Lane3(34,35,36) Lane4(31,32,33)
  */
@@ -19,7 +19,7 @@ const int LEDS[4][3] = {
 
 void setup() {
   Serial.begin(9600);
-  Serial1.begin(9600);
+  Serial2.begin(9600);
 
   for (int i = 0; i < 4; i++)
     for (int j = 0; j < 3; j++) {
@@ -45,8 +45,8 @@ void setup() {
 
 void loop() {
   // ESP32 commands
-  if (Serial1.available()) {
-    String line = Serial1.readStringUntil('\n');
+  if (Serial2.available()) {
+    String line = Serial2.readStringUntil('\n');
     line.trim();
     if (line.length() > 0) {
       Serial.print(F("ESP> "));
@@ -82,18 +82,26 @@ void handleCmd(String line) {
       digitalWrite(LED_EMG, HIGH);
       Serial.print(F("EMG Lane "));
       Serial.println(lane);
+      // Send back to ESP32 Receiver
+      Serial2.print(F("EMG Lane "));
+      Serial2.println(lane);
     } else {
       digitalWrite(LED_EMG, LOW);
       Serial.println(F("EMG off"));
+      Serial2.println(F("EMG off"));
     }
   }
   else if (line.startsWith("DEN:")) {
     Serial.print(F("DEN: "));
     Serial.println(line.substring(4));
+    Serial2.print(F("DEN: "));
+    Serial2.println(line.substring(4));
   }
   else {
     Serial.print(F("? "));
     Serial.println(line);
+    Serial2.print(F("Unknown Cmd: "));
+    Serial2.println(line);
   }
 }
 
@@ -116,12 +124,22 @@ void setSig(String data) {
   }
 
   digitalWrite(LED_EMG, LOW);
+  
+  // Log locally to Mega USB
   Serial.print(F("SET ["));
   for (int i = 0; i < 4; i++) {
     Serial.print(s[i]);
     if (i < 3) Serial.print(',');
   }
   Serial.println(']');
+
+  // Log remotely back to ESP32
+  Serial2.print(F("Lights SET: ["));
+  for (int i = 0; i < 4; i++) {
+    Serial2.print(s[i]);
+    if (i < 3) Serial2.print(',');
+  }
+  Serial2.println(']');
 }
 
 void setAllRed() {

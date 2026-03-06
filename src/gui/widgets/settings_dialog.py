@@ -10,7 +10,10 @@ DEFAULT_CONFIG = {
     "model_path": "yolov8n.pt",
     "one_way_lanes": [False, False, False, False], # Lanes 1-4
     "yellow_black_strip_lane": 0, # 0 for None, 1-4 for specific lane
-    "confidence_threshold": 0.3
+    "confidence_threshold": 0.3,
+    "esp32_enabled": False,
+    "esp32_port": "COM3",
+    "esp32_baud": 115200
 }
 
 class SettingsDialog(QDialog):
@@ -60,6 +63,23 @@ class SettingsDialog(QDialog):
         h_conf.addWidget(self.edit_conf)
         layout.addLayout(h_conf)
 
+        # ESP32 Settings
+        group_esp = QGroupBox("ESP32 Communication")
+        v_esp = QVBoxLayout()
+        
+        self.chk_esp = QCheckBox("Enable ESP32 Serial Bridge")
+        self.chk_esp.setChecked(self.config.get("esp32_enabled", False))
+        v_esp.addWidget(self.chk_esp)
+        
+        h_esp_port = QHBoxLayout()
+        h_esp_port.addWidget(QLabel("ESP32 COM Port:"))
+        self.edit_esp_port = QLineEdit(self.config.get("esp32_port", "COM3"))
+        h_esp_port.addWidget(self.edit_esp_port)
+        v_esp.addLayout(h_esp_port)
+        
+        group_esp.setLayout(v_esp)
+        layout.addWidget(group_esp)
+
         # Lane Configuration
         group_lanes = QGroupBox("Lane Configuration")
         v_lanes = QVBoxLayout()
@@ -91,6 +111,9 @@ class SettingsDialog(QDialog):
         except ValueError:
             self.config["confidence_threshold"] = 0.3
             
+        self.config["esp32_enabled"] = self.chk_esp.isChecked()
+        self.config["esp32_port"] = self.edit_esp_port.text()
+        
         self.config["one_way_lanes"] = [chk.isChecked() for chk in self.chk_one_way]
         self.save_config()
         self.accept()
